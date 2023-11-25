@@ -8,97 +8,114 @@
 import SwiftUI
 
 struct EmojiMemoryGameView: View {
+    typealias Card = MemoryGame<String>.Card
     @ObservedObject var viewModel: EmojiMemoryGame
     
-    private let cardAspectRatio: CGFloat = 2/3
-
+    private let aspectRatio: CGFloat = 2/3
+    private let spacing: CGFloat = 4
+    private let dealAnimation: Animation = .easeInOut(duration: 1)
+    private let dealInterval: TimeInterval = 0.15
+    private let deckWidth: CGFloat = 50
     
     var body: some View {
         NavigationStack {
             VStack {
-                    cards
-                        .animation(.default, value: viewModel.cards)
-            
-                Button("Shuffie") {
-                    viewModel.shuffle()
+                cards.foregroundColor(viewModel.color)
+                HStack {
+                    score
+                    Spacer()
+                    deck.foregroundColor(viewModel.color)
+                    Spacer()
+                    shuffle
                 }
-                .padding()
             }
             .navigationTitle("Memorize!")
+            .padding()
+        }
+    }
+    
+    private var score: some View {
+        Text("Score: \(viewModel.score)")
+            .animation(nil)
+    }
+    
+    private var shuffle: some View {
+        Button("Shuffie") {
+            withAnimation {
+                viewModel.shuffle()
+            }
         }
     }
     
     private var cards: some View {
-        GeometryReader { geometry in
-            let gridItemSize = gridItemWidthThatFits(
-                count: viewModel.cards.count,
-                size: geometry.size,
-                atAspectRatio: cardAspectRatio
-            )
-            LazyVGrid(columns: [GridItem(.adaptive(minimum: gridItemSize), spacing: 0)], spacing: 0) {
-                ForEach(viewModel.cards) { card in
-                    CardView(card)
-                        .aspectRatio(cardAspectRatio, contentMode: .fit)
-                        .padding(4)
-                        .onTapGesture {
-                            viewModel.choose(card)
-                        }
-                }
+        AspectVGrid(viewModel.cards, aspectRatio: aspectRatio) { card in
+            if isDealt(card) {
+                CardView(card)
+                    .matchedGeometryEffect(id: card.id, in: dealingNamespace)
+                    .transition(.asymmetric(insertion: .identity, removal: .identity))
+                    .padding(spacing)
+                    .overlay(FlyingNumber(number: scoreChange(causedBy: card)))
+                    .zIndex(scoreChange(causedBy: card) != 0 ? 100 : 0)
+                    .onTapGesture {
+                        choose(card)
+                    }
             }
         }
-        .foregroundColor(.orange)
     }
     
-    func gridItemWidthThatFits(count: Int, size: CGSize, atAspectRatio aspectRatio: CGFloat) -> CGFloat {
-        let count = CGFloat(count)
-        var columnCount = 1.0
-        repeat {
-            let width = size.width / columnCount
-            let height = width / aspectRatio
-            
-            let rowCount = (count / columnCount).rounded(.up)
-            if rowCount * height < size.height {
-                return (size.width / columnCount).rounded(.down)
-            }
-            
-            columnCount += 1
-            
-        } while columnCount < count
-        return min(size.width / count, size.height * aspectRatio).rounded(.down)
-//        return 95
-    }
-}
-
-struct CardView: View {
-    let card: MemoryGame<String>.Card
+    @State private var dealt = Set<Card.ID>()
     
-    init(_ card: MemoryGame<String>.Card) {
-        self.card = card
+    private func isDealt(_ card: Card) -> Bool {
+        dealt.contains(card.id)
     }
     
-    var body: some View {
+    private var undealtCards: [Card] {
+        viewModel.cards.filter { !isDealt($0) }
+    }
+    
+    @Namespace private var dealingNamespace
+    
+    private var deck: some View {
         ZStack {
-            let base = RoundedRectangle(cornerRadius: 12)
-            
-            Group {
-                base.fill(.white)
-                base.strokeBorder(Color.orange, lineWidth: 2)
-                Text(card.content)
-                    .font(.system(size: 200))
-                    .minimumScaleFactor(0.01)
-                    .aspectRatio(1, contentMode: .fit)
+            ForEach(undealtCards) { card in
+                CardView(card)
+                    .matchedGeometryEffect(id: card.id, in: dealingNamespace)
+                    .transition(.asymmetric(insertion: .identity, removal: .identity))
             }
-            .opacity(card.isFaceUp ? 1 : 0)
-            
-            base.fill()
-                .opacity(card.isFaceUp ? 0 : 1)
         }
-        .opacity(card.isFaceUp || !card.isMatched ? 1 : 0)
+        .frame(width: deckWidth, height: deckWidth / aspectRatio)
+        .onTapGesture {
+            deal()
+        }
+    }
+    
+    private func deal() {
+        var delay: TimeInterval = 0
+        for card in viewModel.cards {
+            withAnimation(dealAnimation.delay(delay)) {
+                _ = dealt.insert(card.id)
+            }
+            delay += dealInterval
+        }
+    }
+        
+    private func choose(_ card: Card) {
+        withAnimation {
+            let scoreBeforeChoosing = viewModel.score
+            viewModel.choose(card)
+            let scoreChange = viewModel.score - scoreBeforeChoosing
+            lastScoreChange = (scoreChange, causedByCardId: card.id)
+        }
+    }
+    
+    @State private var lastScoreChange = (0, causedByCardId: "")
+    
+    private func scoreChange(causedBy card: Card) -> Int {
+        let (amount, causedByCardId: id) = lastScoreChange
+        return card.id == id ? amount : 0
     }
 }
 
-struct EmojiMemoryGameView_Previews: PreviewProvider {
-    static var previews: some View {
-        EmojiMemoryGameView(viewModel: EmojiMemoryGame())
-    }
+#Preview("EmojiMemoryGameView") {
+    EmojiMemoryGameView(viewModel: EmojiMemoryGame())
 }
